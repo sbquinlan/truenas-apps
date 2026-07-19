@@ -1,6 +1,8 @@
 groups:
   - name: Tailscale Configuration
     description: Configure Tailscale
+  - name: Tailscale Services Configuration
+    description: Configure Tailscale Services hosted by this node
   - name: Network Configuration
     description: Configure Network for Tailscale
   - name: Storage Configuration
@@ -166,6 +168,75 @@ questions:
                       label: Value
                       schema:
                         type: string
+
+  - variable: services
+    label: Tailscale Services
+    description: |
+      Optionally advertise applications reachable from this NAS as Tailscale Services.</br>
+      Each Service must already be defined in the Tailscale admin console with matching TCP ports.</br>
+      This Tailscale node must use a tag-based identity and the Service advertisement must be approved</br>
+      or covered by an auto-approver policy. See https://tailscale.com/kb/1552/tailscale-services
+    group: Tailscale Services Configuration
+    schema:
+      type: list
+      default: []
+      items:
+        - variable: service
+          label: Service
+          schema:
+            type: dict
+            attrs:
+              - variable: name
+                label: Service Name
+                description: |
+                  Name of a Service already defined in the Tailscale admin console.</br>
+                  Enter the name without the `svc:` prefix.
+                schema:
+                  type: string
+                  required: true
+                  valid_chars: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+                  valid_chars_error: |
+                    Use 1 to 63 lowercase letters, numbers, or hyphens, and do not start or end with a hyphen.
+              - variable: endpoints
+                label: Endpoints
+                description: TCP ports and destinations provided by this Service.
+                schema:
+                  type: list
+                  min: 1
+                  required: true
+                  items:
+                    - variable: endpoint
+                      label: Endpoint
+                      schema:
+                        type: dict
+                        attrs:
+                          - variable: service_port
+                            label: Service Port
+                            description: |
+                              TCP port clients use when connecting to this Tailscale Service.</br>
+                              This must match a port defined for the Service in the Tailscale admin console.
+                            schema:
+                              type: int
+                              min: 1
+                              max: 65535
+                              required: true
+                          - variable: target_host
+                            label: Target Host
+                            description: |
+                              Hostname or IP address to which Tailscale forwards traffic.</br>
+                              Use 127.0.0.1 for an app port published on this NAS when Host Network is enabled.
+                            schema:
+                              type: string
+                              default: "127.0.0.1"
+                              required: true
+                          - variable: target_port
+                            label: Target Port
+                            description: Port on the target host where the application is listening.
+                            schema:
+                              type: int
+                              min: 1
+                              max: 65535
+                              required: true
 
   - variable: network
     label: ""

@@ -31,6 +31,39 @@
 {% do c1.environment.add_env("TS_AUTH_ONCE", values.tailscale.auth_once) %}
 {% do c1.environment.add_env("TS_AUTHKEY", values.tailscale.auth_key) %}
 {% do c1.environment.add_env("TS_SOCKET", "/var/run/tailscale/tailscaled.sock") %}
+{% if values.services %}
+  {% if not values.network.host_network %}
+    {% do tpl.funcs.fail("Tailscale Services require Host Network to reach applications published on this NAS") %}
+  {% endif %}
+
+  {% set serve_config = namespace(x={"Services": {}}) %}
+  {% for service in values.services %}
+    {% set service_name = "svc:%s" | format(service.name) %}
+    {% if service_name in serve_config.x.Services %}
+      {% do tpl.funcs.fail("Tailscale Service [%s] is configured more than once" | format(service_name)) %}
+    {% endif %}
+
+    {% set tcp = namespace(x={}) %}
+    {% for endpoint in service.endpoints %}
+      {% set service_port = endpoint.service_port | string %}
+      {% if service_port in tcp.x %}
+        {% do tpl.funcs.fail(
+          "Tailscale Service [%s] has TCP port [%s] configured more than once" | format(service_name, service_port)
+        ) %}
+      {% endif %}
+      {% set target = "[%s]:%d" | format(endpoint.target_host, endpoint.target_port)
+        if ":" in endpoint.target_host else
+        "%s:%d" | format(endpoint.target_host, endpoint.target_port) %}
+      {% do tcp.x.update({service_port: {
+        "TCPForward": target
+      }}) %}
+    {% endfor %}
+    {% do serve_config.x.Services.update({service_name: {"TCP": tcp.x}}) %}
+  {% endfor %}
+
+  {% do c1.configs.add("serve-config", serve_config.x | tojson, values.consts.serve_config_path, "0444") %}
+  {% do c1.environment.add_env("TS_SERVE_CONFIG", values.consts.serve_config_path) %}
+{% endif %}
 {% if values.tailscale.tailscaled_args %}
   {% do c1.environment.add_env("TS_TAILSCALED_EXTRA_ARGS", values.tailscale.tailscaled_args|unique|list|join(" ")) %}
 {% endif %}
