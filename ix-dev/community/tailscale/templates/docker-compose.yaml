@@ -32,29 +32,16 @@
 {% do c1.environment.add_env("TS_AUTHKEY", values.tailscale.auth_key) %}
 {% do c1.environment.add_env("TS_SOCKET", values.consts.socket_path) %}
 
-{% set run_config = {"type": "temporary", "volume_config": {"volume_name": "tailscale-run"}} %}
-{% set service_script = namespace(lines=[
-  "#!/bin/sh",
-  "set -eu",
-  "",
-  "attempt=0",
-  "until tailscale --socket=%s status --json 2>/dev/null | grep -q '\"BackendState\": \"Running\"'; do" | format(values.consts.socket_path),
-  "  attempt=$((attempt + 1))",
-  "  if [ \"$attempt\" -ge 120 ]; then",
-  "    echo 'Timed out waiting for Tailscale to reach the Running state' >&2",
-  "    exit 1",
-  "  fi",
-  "  sleep 1",
-  "done",
-  "",
-  "tailscale --socket=%s serve set-config --all %s" | format(
-    values.consts.socket_path, values.consts.empty_services_config_path
-  ),
-]) %}
-{% set configured_services = namespace(names=[]) %}
-{% if values.services %}
-  {% if not values.network.host_network %}
+{% if values.get("services_enabled", false) %}
+  {% set serve_config = namespace(x={"Services": {}}) %}
+  {% set configured_services = namespace(names=[]) %}
+  {% set tailnet_dns_suffix = values.get("tailnet_dns_suffix", "") %}
+
+  {% if values.services and not values.network.host_network %}
     {% do tpl.funcs.fail("Tailscale Services require Host Network to reach applications published on this NAS") %}
+  {% endif %}
+  {% if tailnet_dns_suffix and not tpl.funcs.match_regex(tailnet_dns_suffix, "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$") %}
+    {% do tpl.funcs.fail("Invalid Tailnet DNS Suffix [%s]" | format(tailnet_dns_suffix)) %}
   {% endif %}
 
   {% for service in values.services %}
@@ -63,8 +50,9 @@
       {% do tpl.funcs.fail("Tailscale Service [%s] is configured more than once" | format(service_name)) %}
     {% endif %}
     {% do configured_services.names.append(service_name) %}
-
+    {% set service_config = namespace(x={"TCP": {}}) %}
     {% set configured_ports = namespace(x=[]) %}
+
     {% for endpoint in service.endpoints %}
       {% set service_port = endpoint.service_port | string %}
       {% if service_port in configured_ports.x %}
@@ -85,33 +73,36 @@
       {% set target = "[%s]:%d" | format(endpoint.target_host, endpoint.target_port)
         if ":" in endpoint.target_host else
         "%s:%d" | format(endpoint.target_host, endpoint.target_port) %}
-      {% set target_protocol = "tcp" if protocol == "tcp" else endpoint.get("target_protocol", "http") %}
-      {% set valid_target_protocols = ["tcp"] if protocol == "tcp" else ["http", "https", "https+insecure"] %}
-      {% if target_protocol not in valid_target_protocols %}
-        {% do tpl.funcs.fail(
-          "Invalid backend protocol [%s] for Tailscale Service [%s]" | format(target_protocol, service_name)
-        ) %}
-      {% endif %}
-      {% do service_script.lines.append(
-        "tailscale --socket=%s serve --service=%s --%s=%s %s://%s" | format(
-          values.consts.socket_path, service_name, protocol, service_port, target_protocol, target
-        )
-      ) %}
-    {% endfor %}
-  {% endfor %}
-{% endif %}
 
-{% set service_configurator = tpl.add_container(values.consts.service_configurator_container_name, "image") %}
-{% do service_configurator.setup_as_helper() %}
-{% do service_configurator.set_entrypoint([values.consts.service_config_script_path]) %}
-{% do service_configurator.configs.add(
-  "configure-services", service_script.lines | join("\n"), values.consts.service_config_script_path, "0555"
-) %}
-{% do service_configurator.configs.add(
-  "empty-services", '{"version":"0.0.1","services":{}}', values.consts.empty_services_config_path, "0444"
-) %}
-{% do service_configurator.add_storage("/var/run/tailscale", run_config) %}
-{% do service_configurator.depends.add_dependency(values.consts.tailscale_container_name, "service_healthy") %}
+      {% if protocol == "tcp" %}
+        {% do service_config.x.TCP.update({service_port: {"TCPForward": target}}) %}
+      {% else %}
+        {% if not tailnet_dns_suffix %}
+          {% do tpl.funcs.fail(
+            "Tailnet DNS Suffix is required for HTTP and HTTPS endpoints in Tailscale Service [%s]" | format(service_name)
+          ) %}
+        {% endif %}
+        {% set target_protocol = endpoint.get("target_protocol", "http") %}
+        {% if target_protocol not in ["http", "https", "https+insecure"] %}
+          {% do tpl.funcs.fail(
+            "Invalid backend protocol [%s] for Tailscale Service [%s]" | format(target_protocol, service_name)
+          ) %}
+        {% endif %}
+        {% do service_config.x.TCP.update({service_port: {"HTTPS": true} if protocol == "https" else {"HTTP": true}}) %}
+        {% if "Web" not in service_config.x %}
+          {% do service_config.x.update({"Web": {}}) %}
+        {% endif %}
+        {% set host_port = "%s.%s:%s" | format(service.name, tailnet_dns_suffix, service_port) %}
+        {% set proxy = "%s://%s" | format(target_protocol, target) %}
+        {% do service_config.x.Web.update({host_port: {"Handlers": {"/": {"Proxy": proxy}}}}) %}
+      {% endif %}
+    {% endfor %}
+    {% do serve_config.x.Services.update({service_name: service_config.x}) %}
+  {% endfor %}
+
+  {% do c1.configs.add("serve-config", serve_config.x | tojson, values.consts.serve_config_path, "0444") %}
+  {% do c1.environment.add_env("TS_SERVE_CONFIG", values.consts.serve_config_path) %}
+{% endif %}
 {% if values.tailscale.tailscaled_args %}
   {% do c1.environment.add_env("TS_TAILSCALED_EXTRA_ARGS", values.tailscale.tailscaled_args|unique|list|join(" ")) %}
 {% endif %}
@@ -129,7 +120,7 @@
   {% do c1.add_tun_device() %}
 {% endif %}
 
-{% do c1.add_storage("/var/run/tailscale", run_config) %}
+{% do c1.add_storage("/var/run/tailscale", {"type": "tmpfs", "tmpfs_config": {"mode": "0755"}}) %}
 
 {% do c1.add_storage(values.consts.state_path, values.storage.state) %}
 {% if values.tailscale.userspace %}

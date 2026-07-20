@@ -169,6 +169,28 @@ questions:
                       schema:
                         type: string
 
+  - variable: services_enabled
+    label: Manage Tailscale Services
+    description: Generate and apply a Tailscale Services configuration for this node.
+    group: Tailscale Services Configuration
+    schema:
+      type: boolean
+      default: false
+
+  - variable: tailnet_dns_suffix
+    label: Tailnet DNS Suffix
+    description: |
+      Tailnet DNS suffix used to construct HTTP and HTTPS Service names.</br>
+      Find it under Tailscale DNS settings. For example: `example-tailnet.ts.net`.</br>
+      This is not required when every configured endpoint uses raw TCP forwarding.
+    group: Tailscale Services Configuration
+    schema:
+      type: string
+      default: ""
+      show_if: [["services_enabled", "=", true]]
+      valid_chars: "^$|^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+      valid_chars_error: Enter a lowercase DNS suffix without a scheme, trailing dot, or port.
+
   - variable: services
     label: Tailscale Services
     description: |
@@ -180,6 +202,7 @@ questions:
     schema:
       type: list
       default: []
+      show_if: [["services_enabled", "=", true]]
       items:
         - variable: service
           label: Service

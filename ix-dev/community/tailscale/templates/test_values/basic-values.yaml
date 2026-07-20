@@ -19,6 +19,8 @@ tailscale:
   advertise_routes: []
   additional_envs: []
 
+services_enabled: true
+tailnet_dns_suffix: example-tailnet.ts.net
 services:
   - name: linkding
     endpoints:
