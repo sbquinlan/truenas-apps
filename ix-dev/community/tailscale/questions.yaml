@@ -199,7 +199,7 @@ questions:
                     Use 1 to 63 lowercase letters, numbers, or hyphens, and do not start or end with a hyphen.
               - variable: endpoints
                 label: Endpoints
-                description: TCP ports and destinations provided by this Service.
+                description: Public ports and backend destinations provided by this Service.
                 schema:
                   type: list
                   min: 1
@@ -210,16 +210,49 @@ questions:
                       schema:
                         type: dict
                         attrs:
+                          - variable: protocol
+                            label: Service Protocol
+                            description: |
+                              HTTPS terminates Tailscale-managed TLS and proxies to the backend.</br>
+                              HTTP provides an unencrypted web endpoint. TCP performs raw port forwarding.
+                            schema:
+                              type: string
+                              default: https
+                              required: true
+                              enum:
+                                - value: https
+                                  description: HTTPS (Recommended)
+                                - value: http
+                                  description: HTTP
+                                - value: tcp
+                                  description: TCP
                           - variable: service_port
                             label: Service Port
                             description: |
-                              TCP port clients use when connecting to this Tailscale Service.</br>
+                              Port clients use when connecting to this Tailscale Service.</br>
+                              HTTPS defaults to 443. For HTTP, normally change this to 80.</br>
                               This must match a port defined for the Service in the Tailscale admin console.
                             schema:
                               type: int
+                              default: 443
                               min: 1
                               max: 65535
                               required: true
+                          - variable: target_protocol
+                            label: Backend Protocol
+                            description: Protocol used between Tailscale and the backend application.
+                            schema:
+                              type: string
+                              default: http
+                              required: true
+                              show_if: [["protocol", "!=", "tcp"]]
+                              enum:
+                                - value: http
+                                  description: HTTP (Recommended)
+                                - value: https
+                                  description: HTTPS
+                                - value: https+insecure
+                                  description: HTTPS (Allow an untrusted backend certificate)
                           - variable: target_host
                             label: Target Host
                             description: |
@@ -229,6 +262,8 @@ questions:
                               type: string
                               default: "127.0.0.1"
                               required: true
+                              valid_chars: "^[a-zA-Z0-9:][a-zA-Z0-9._:-]*$"
+                              valid_chars_error: Use a hostname or IP address without a URL scheme, path, or port.
                           - variable: target_port
                             label: Target Port
                             description: Port on the target host where the application is listening.

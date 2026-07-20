@@ -8,9 +8,12 @@ images:
 
 consts:
   tailscale_container_name: tailscale
+  service_configurator_container_name: service-configurator
   perms_container_name: permissions
   state_path: /var/lib/tailscale
-  serve_config_path: /etc/tailscale/serve.json
+  socket_path: /var/run/tailscale/tailscaled.sock
+  service_config_script_path: /etc/tailscale/configure-services.sh
+  empty_services_config_path: /etc/tailscale/empty-services.json
   reserved_keys:
     - --advertise-exit-node
     - --accept-routes
